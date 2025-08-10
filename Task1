@@ -1,0 +1,261 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.pipeline import Pipeline
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+import pickle
+import warnings
+warnings.filterwarnings('ignore')
+
+# Download required NLTK data
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('punkt')
+    nltk.download('stopwords')
+
+class SpamDetector:
+    def __init__(self):
+        self.models = {}
+        self.vectorizer = TfidfVectorizer(max_features=5000, stop_words='english')
+        self.stemmer = PorterStemmer()
+        self.stop_words = set(stopwords.words('english'))
+        
+    def preprocess_text(self, text):
+        """Clean and preprocess email text"""
+        if pd.isna(text):
+            return ""
+        
+        # Convert to lowercase
+        text = text.lower()
+        
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # Remove URLs
+        text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
+        
+        # Remove email addresses
+        text = re.sub(r'\S+@\S+', '', text)
+        
+        # Remove special characters and digits
+        text = re.sub(r'[^a-zA-Z\s]', '', text)
+        
+        # Remove extra whitespaces
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Tokenize and stem
+        words = text.split()
+        words = [self.stemmer.stem(word) for word in words if word not in self.stop_words and len(word) > 2]
+        
+        return ' '.join(words)
+    
+    def create_sample_data(self):
+        """Create sample dataset for demonstration"""
+        spam_emails = [
+            "Congratulations! You've won $1000000! Click here now to claim your prize!",
+            "FREE MONEY! No strings attached! Send your bank details now!",
+            "URGENT: Your account will be suspended. Click here immediately!",
+            "Amazing weight loss pills! Lose 50lbs in 10 days! Buy now!",
+            "Nigerian prince needs your help! Transfer money for huge reward!",
+            "Hot singles in your area! Click now for instant access!",
+            "WINNER! You've been selected for a cash prize of $50000!",
+            "Pharmacy online! Cheap viagra, cialis! No prescription needed!",
+            "MAKE MONEY FAST! Work from home! $5000/week guaranteed!",
+            "Credit card debt relief! Call now! Limited time offer!",
+            "FREE iPhone! Just pay shipping! Limited quantities!",
+            "Investment opportunity! Double your money in 30 days!",
+            "Enlarge your... satisfaction guaranteed! Order now!",
+            "URGENT TAX REFUND! Click here to claim $2500!",
+            "Casino bonuses! Free spins! Win big money now!"
+        ]
+        
+        ham_emails = [
+            "Hi John, let's meet for coffee tomorrow at 3pm. Looking forward to catching up!",
+            "The quarterly report is ready for review. Please find it attached.",
+            "Thank you for your purchase. Your order will be shipped within 2-3 business days.",
+            "Meeting reminder: Project discussion tomorrow at 10am in conference room B.",
+            "Happy birthday! Hope you have a wonderful day with family and friends.",
+            "Your flight booking confirmation for next week's trip to Chicago.",
+            "Weekly team update: All projects are on track for this month's deadline.",
+            "Thank you for your job application. We will review it and get back to you.",
+            "Grocery list: milk, bread, eggs, chicken, vegetables for dinner tonight.",
+            "Conference schedule has been updated. Please check the new timings.",
+            "Your subscription renewal is due next month. No action required.",
+            "Weather forecast: Sunny tomorrow, perfect for the outdoor event.",
+            "Bank statement for last month is now available in your online account.",
+            "Recipe for chocolate cake as requested. Hope you enjoy making it!",
+            "Class schedule for next semester has been posted on the portal."
+        ]
+        
+        # Create DataFrame
+        data = []
+        for email in spam_emails:
+            data.append({'text': email, 'label': 1})  # 1 for spam
+        for email in ham_emails:
+            data.append({'text': email, 'label': 0})  # 0 for ham
+            
+        return pd.DataFrame(data)
+    
+    def train_models(self, df):
+        """Train multiple ML models"""
+        print("Preprocessing text data...")
+        df['processed_text'] = df['text'].apply(self.preprocess_text)
+        
+        # Split data
+        X = df['processed_text']
+        y = df['label']
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+        
+        # Vectorize text
+        X_train_vec = self.vectorizer.fit_transform(X_train)
+        X_test_vec = self.vectorizer.transform(X_test)
+        
+        # Initialize models
+        models_to_train = {
+            'Naive Bayes': MultinomialNB(),
+            'Logistic Regression': LogisticRegression(random_state=42, max_iter=1000),
+            'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
+            'SVM': SVC(kernel='linear', random_state=42)
+        }
+        
+        print("\nTraining models...")
+        results = {}
+        
+        for name, model in models_to_train.items():
+            print(f"Training {name}...")
+            model.fit(X_train_vec, y_train)
+            y_pred = model.predict(X_test_vec)
+            accuracy = accuracy_score(y_test, y_pred)
+            
+            self.models[name] = model
+            results[name] = {
+                'accuracy': accuracy,
+                'predictions': y_pred,
+                'actual': y_test
+            }
+            
+            print(f"{name} Accuracy: {accuracy:.4f}")
+        
+        # Find best model
+        best_model_name = max(results.keys(), key=lambda x: results[x]['accuracy'])
+        self.best_model = self.models[best_model_name]
+        print(f"\nBest Model: {best_model_name} (Accuracy: {results[best_model_name]['accuracy']:.4f})")
+        
+        return results
+    
+    def predict_email(self, email_text):
+        """Predict if an email is spam or ham"""
+        processed_text = self.preprocess_text(email_text)
+        vectorized_text = self.vectorizer.transform([processed_text])
+        
+        # Get predictions from all models
+        predictions = {}
+        for name, model in self.models.items():
+            pred = model.predict(vectorized_text)[0]
+            prob = model.predict_proba(vectorized_text)[0] if hasattr(model, 'predict_proba') else None
+            predictions[name] = {
+                'prediction': 'Spam' if pred == 1 else 'Ham',
+                'confidence': prob[pred] if prob is not None else None
+            }
+        
+        # Best model prediction
+        best_pred = self.best_model.predict(vectorized_text)[0]
+        best_prob = self.best_model.predict_proba(vectorized_text)[0] if hasattr(self.best_model, 'predict_proba') else None
+        
+        return {
+            'result': 'Spam' if best_pred == 1 else 'Ham',
+            'confidence': best_prob[best_pred] if best_prob is not None else None,
+            'all_predictions': predictions
+        }
+    
+    def save_model(self, filename='spam_detector_model.pkl'):
+        """Save the trained model and vectorizer"""
+        model_data = {
+            'models': self.models,
+            'vectorizer': self.vectorizer,
+            'best_model': self.best_model
+        }
+        with open(filename, 'wb') as f:
+            pickle.dump(model_data, f)
+        print(f"Model saved as {filename}")
+    
+    def load_model(self, filename='spam_detector_model.pkl'):
+        """Load a pre-trained model"""
+        try:
+            with open(filename, 'rb') as f:
+                model_data = pickle.load(f)
+            self.models = model_data['models']
+            self.vectorizer = model_data['vectorizer']
+            self.best_model = model_data['best_model']
+            print(f"Model loaded from {filename}")
+            return True
+        except FileNotFoundError:
+            print(f"Model file {filename} not found.")
+            return False
+
+def main():
+    """Main function to demonstrate the spam detector"""
+    detector = SpamDetector()
+    
+    # Create sample data
+    print("Creating sample dataset...")
+    df = detector.create_sample_data()
+    print(f"Dataset created with {len(df)} emails ({sum(df['label'])} spam, {len(df)-sum(df['label'])} ham)")
+    
+    # Train models
+    results = detector.train_models(df)
+    
+    # Test with sample emails
+    print("\n" + "="*50)
+    print("TESTING SPAM DETECTION")
+    print("="*50)
+    
+    test_emails = [
+        "Congratulations! You won $1000000! Click now!",
+        "Hi there, let's meet for lunch tomorrow at noon.",
+        "URGENT: Account suspended! Click here immediately!",
+        "Your order has been confirmed and will arrive soon."
+    ]
+    
+    for i, email in enumerate(test_emails, 1):
+        print(f"\nTest Email {i}: {email}")
+        result = detector.predict_email(email)
+        print(f"Prediction: {result['result']}")
+        if result['confidence']:
+            print(f"Confidence: {result['confidence']:.4f}")
+        print("-" * 30)
+    
+    # Interactive mode
+    print("\n" + "="*50)
+    print("INTERACTIVE MODE")
+    print("="*50)
+    print("Enter emails to classify (type 'quit' to exit):")
+    
+    while True:
+        user_input = input("\nEnter email text: ").strip()
+        if user_input.lower() in ['quit', 'exit', 'q']:
+            break
+        
+        if user_input:
+            result = detector.predict_email(user_input)
+            print(f"Result: {result['result']}")
+            if result['confidence']:
+                print(f"Confidence: {result['confidence']:.4f}")
+    
+    # Save model
+    detector.save_model()
+    print("\nSpam detection system complete!")
+
+if __name__ == "__main__":
+    main()
